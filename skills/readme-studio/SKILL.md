@@ -2,250 +2,298 @@
 name: readme-studio
 description: >
   Orchestrate intelligent README generation by chaining published skills
-  (beautify-github-readme for content generation, shieldcn-badges for themed
-  badges) with community ToC tool (md-toc) and optional custom block renderers.
-  The skill introspects your repo, picks a theme palette, delegates README
-  generation to beautify-github-readme (which adapts structure to your content),
-  then layers in themed badges, clickable ToC, and optional deterministic blocks
-  (workflow badges, CI table, directory tree). Use when asked to "generate a
-  README", "refresh the README with theme", or "apply readme-studio" across
-  repos (gke_GitOps, devops_Terraform, etc.). Pure orchestration — all heavy
-  lifting delegated to published skills + community tools.
+  (beautify-github-readme in README mode for structure, copy and visuals;
+  shieldcn-badges for themed badges) with the community ToC tool (md-toc),
+  an optional repo-owned deterministic-block generator, and a house-rule lint.
+  Introspects the repo, locks an art direction, delegates the README rewrite,
+  then layers badges, ToC and deterministic blocks on top. Use when asked to
+  "generate a README", "refresh the README with theme", "beautify the readme",
+  or "apply readme-studio" across repos (gke_GitOps, devops_Terraform, etc.).
+  Pure orchestration — all heavy lifting delegated to published skills and
+  community tools.
 ---
 
-# README Studio — Intelligent Theme + Generation Orchestration
+# README Studio — Themed README Orchestration
 
-Intelligently generate a production-grade themed README by orchestrating published skills. The skill:
+Generate a production-grade, themed README by orchestrating published skills. No templating, no bespoke generator, no embedded assets.
 
-1. **Introspects your repo** (services, apps, workflows, etc.)
-2. **Delegates to beautify-github-readme** to generate/restructure README (structure adapts to your repo content)
-3. **Chains:** theme palette → beautify → themed badges → clickable ToC → deterministic blocks (optional) → lint
+## The one rule that makes this work
 
-No hand-writing content. No templating. The LLM-powered beautify skill reads your repo and generates prose; readme-studio orchestrates the theme + structure + validation pipeline.
+`beautify-github-readme` is a **prompt-driven skill, not a binary**. It cannot be "called" — it must be **invoked in a prompt** and it will **stop and ask questions** unless those questions are already answered.
 
-## Installation (One-Time Setup)
+Chaining only works if the orchestrator **pre-answers every gating question**. A delegation that merely mentions beautify, or says "readme-studio delegates to beautify", produces one of two failures:
 
-### Required (Global, Once Per System)
+1. The pipeline stalls on beautify's question wall, or
+2. The orchestrator silently hand-rolls a plain banner instead.
 
-```bash
-# Published skills (do the heavy lifting)
-npx skills add oil-oil/beautify-github-readme -g -a opencode
-npx skills add jal-co/shieldcn -g -a opencode
+Neither is acceptable. Answer the questions up front.
 
-# Community ToC generator (CLI). The command it installs is `md_toc` (underscore).
-# Homebrew/system Pythons often refuse a global pip install (PEP 668); a venv avoids that:
-python3 -m venv ~/.local/share/md-toc-venv \
-  && ~/.local/share/md-toc-venv/bin/pip install md-toc \
-  && ln -sfn ~/.local/share/md-toc-venv/bin/md_toc ~/.local/bin/md_toc
+## Pipeline
 
-# This orchestration skill
-npx skills add jomakori/readme-studio -g -a opencode
+```
+0. Prereq check      → verify tools, install if missing, never stall
+1. Introspect repo   → build the profile
+2. Lock art direction→ palette + typography + motif (feeds beautify)
+3. beautify (README mode, questions pre-answered) → rewrite + visuals
+   ↳ beautify audit
+4. shieldcn-badges   → themed badge row
+5. Repo generator    → deterministic blocks (optional)
+6. md_toc            → clickable ToC
+7. House-rule lint   → final verification
+8. Hand off          → preview + diff, do NOT commit
 ```
 
-### Optional: CI Hook for ToC Validation
+**Order is load-bearing.** `beautify` rewrites information order and owns the README file in Step 3. Every additive step (4–6) runs **after** it, otherwise beautify's rewrite can reorder or strip what you injected.
+
+---
+
+## Step 0: Prerequisite check — install, do not stall
+
+Verify each prerequisite. Missing ones that are **installable are installed silently**; only report a genuine blocker.
 
 ```bash
-echo "- repo: https://github.com/frnmst/md-toc" >> .pre-commit-config.yaml
-echo "  rev: 9.0.0" >> .pre-commit-config.yaml
-echo "  hooks:" >> .pre-commit-config.yaml
-echo "  - id: md-toc" >> .pre-commit-config.yaml
+# Skills present?
+ls -d ~/.agents/skills/beautify-github-readme ~/.agents/skills/shieldcn-badges 2>/dev/null
+
+# ToC tool present? (binary is `md_toc`, underscore)
+command -v md_toc || {
+  python3 -m venv ~/.local/share/md-toc-venv \
+    && ~/.local/share/md-toc-venv/bin/pip install md-toc \
+    && ln -sfn ~/.local/share/md-toc-venv/bin/md_toc ~/.local/bin/md_toc
+}
+
+# Repo-owned deterministic block generator present? (optional)
+test -f .useful-scripts/render_readme_blocks.py && echo "generator: yes" || echo "generator: no (skip Step 5)"
 ```
 
-## Workflow: 7 Steps (Fully Orchestrated)
+Missing skills are fixed with `npx skills add <repo> -g -a opencode`. A venv is required for `md-toc` because system Pythons refuse a global install (PEP 668).
 
-### Step 1: Introspect Repo
+**Do not present the user with an A/B/C menu of workarounds.** Install, then proceed. Report only what genuinely cannot be installed.
 
-**Agent analyzes:**
-- Existing README (if present) — tone, sections, focus?
-- Repo structure (`.github/workflows/`, `services/`, `apps/`, etc.)
-- What metadata is available (workloads, registries, CI pipelines)?
+---
 
-**Goal:** Understand repo intent + content for downstream generation.
+## Step 1: Introspect the repo
 
-**Output:** Repo profile (type: infra/app, emphasis: GitOps/Terraform/custom, key sections).
+Read, don't ask:
 
-### Step 2: Select Theme Palette
+- Existing `README.md` — tone, information order, emphasis, what is hand-written.
+- Top-level layout — `services/`, `apps/`, `charts/`, `terraform/`, `.github/workflows/`.
+- Package/build metadata that names real components.
 
-Choose a gradient palette. Your choice cascades through all downstream rendering.
+**Output — the repo profile:**
 
-**Available palettes:**
+```
+Type:        infra | terraform | app | tooling
+Emphasis:    GitOps loop | module catalog | CLI
+Real proof:  workflows, registries, commands that actually exist
+Sections:    candidate structure derived from the layout above
+```
 
-| Palette | Gradient | Typical Use |
+**Never invent** adoption numbers, benchmarks, compatibility claims, or features. Proof must be a real workflow, a real command, or a real registry entry.
+
+---
+
+## Step 2: Lock the art direction
+
+Choose a seed palette, then expand it into the **art-direction spec beautify expects**. This is not decoration — it is the input contract for Step 3.
+
+**Seed palettes** (pick one, or take a custom gradient from the user):
+
+| Palette | Gradient | Typical use |
 |---|---|---|
-| **Slate → Violet** | `#4169E1` → `#8A2BE2` | Corporate/infra (professional, calm) |
-| **Emerald → Teal** | `#10B981` → `#14B8A6` | Ops/reliability (growth, trust) |
-| **Orange → Red** | `#F97316` → `#DC2626` | Energy/urgency (attention, power) |
-| **Slate → Cyan** | `#64748B` → `#06B6D4` | Tech/systems (cool, innovation) |
-| **Indigo → Pink** | `#6366F1` → `#EC4899` | Creative/modern (bold, vibrant) |
+| Slate → Violet | `#4169E1` → `#8A2BE2` | Corporate / infra (default for infra repos) |
+| Emerald → Teal | `#10B981` → `#14B8A6` | Ops / reliability |
+| Orange → Red | `#F97316` → `#DC2626` | Energy / urgency |
+| Slate → Cyan | `#64748B` → `#06B6D4` | Tech / systems |
+| Indigo → Pink | `#6366F1` → `#EC4899` | Creative / modern |
 
-**User action:** Pick one (default: **Slate → Violet** for infra repos), or describe a custom gradient.
+**Present the choice as an ASCII swatch table.** Visual preview via `opencode-image` is **not available** in this environment — it requires the Kitty graphics protocol, and this host is reached over SSH with no Kitty installed and no `KITTY_PID`. Do not attempt it; do not install it.
 
-**Output:** Theme palette locked for Steps 3–7.
+**Output — the art-direction spec (beautify's own format):**
 
-### Step 3: Generate/Restructure README (beautify-github-readme)
-
-**Delegate to beautify-github-readme skill** — it:
-
-- Reads existing README (if present) + repo introspection from Step 1
-- **Generates structure** that fits your repo:
-  - Infrastructure repos → "How the loop works" + "Services" + "Apps" + "CI" sections
-  - Terraform repos → "Modules" + "Usage" + "Outputs" sections
-  - Custom repos → structure inferred from content
-- **Generates prose** for each section (Quickstart, Troubleshooting, wiring, etc.)
-- **Respects house rules:** no dynamic facts (versions, counts, timings), cluster-agnostic, no emoji in headings
-- **Adds hero banner** (placeholder if no asset; can be replaced with themed SVG later)
-
-**Agent passes to beautify:**
-- Repo introspection (services, apps, workflows from Step 1)
-- Theme palette choice (Step 2)
-- House-rule constraints (from `readme` skill)
-- Existing README (if present) as reference for tone/emphasis
-
-**Output:** Fully generated/restructured README with hero banner, themed sections, clickable structure.
-
-### Step 4: Render Palette Badges (shieldcn-badges)
-
-**Delegate to shieldcn-badges skill** — it:
-
-- Renders stack identity badges (Go, Terraform, Helm, Kubernetes, etc.)
-- Renders live CI status badges (workflow runs, image builds, branch protection)
-- Renders project links (docs, issues, releases)
-- **All themed** — badges inherit the palette from Step 2
-
-**Markers:** Use `<!-- SHIELDS_BADGES -->` and `<!-- /SHIELDS_BADGES -->` sentinels for idempotency.
-
-**Output:** Coloured badge rows injected + idempotent markers in place.
-
-### Step 5: Generate Clickable Table of Contents (md_toc)
-
-**Run the `md_toc` CLI.** Read the argument order carefully — the parser is a subcommand, and `-p` is not the parser flag:
-
-```bash
-md_toc github README.md            # print the ToC to stdout (dry run — start here)
-md_toc -p github README.md         # -p = in-place; "github" = the parser subcommand
-md_toc -d github README.md         # -d = diff check; exits 128 when the ToC is stale
+```
+Palette:     background / foreground / primary / accent / muted
+Typography:  system font stack / scale / weight contrast
+Shape:       radius / stroke / grid / spacing
+Motif:       one recurring project-specific cue (derived from the repo, not generic)
+Composition: calm | editorial | technical | playful | cinematic
 ```
 
-- `github` must be the **parser subcommand** — it selects GitHub's slug algorithm. The default parser produces different anchors.
-- `-p` means **in-place**: it rewrites the file at the marker. `-d` (`--diff`) is the read-only check for CI.
-- The marker defaults to `<!--TOC-->`. Override it with `-m '<marker>'` if the repo already uses a different one, and keep the marker in the README, not in prose.
-- No emoji, no version markers in the ToC.
+The motif must come from this repo. A GitOps repo may use a reconcile loop; a module catalog may use module boundaries. **Do not apply one template to every repository.**
 
-**Output:** ToC inserted at its marker; `md_toc -d github README.md` exits 0.
+---
 
-### Step 6: Render Custom Deterministic Blocks (Optional)
+## Step 3: Delegate the README to beautify-github-readme
 
-**IF your repo provides `.useful-scripts/render_readme_blocks.py`, invoke it:**
+**This is the step that has failed before. Follow it exactly.**
 
-The skill auto-detects and runs this custom generator if present.
+### 3a. Invoke it in beautify's documented form
 
-**Blocks it produces:**
+```
+Use $beautify-github-readme to redesign this repository homepage around its <repo theme>.
+```
 
-1. **Workflow Badges Table** — live CI status per workflow
-2. **CI Environment Table** — pinned versions, component status (cluster-agnostic)
-3. **Directory Tree** — allowlisted top-level registries (services/, apps/, etc.)
+`$beautify-github-readme` is the invocation form the skill documents. Naming the skill in prose without this form does not trigger it.
 
-**Markers:** Use `<!-- BEGIN GENERATED: <name> -->` / `<!-- END GENERATED: <name> -->` sentinels.
+### 3b. Pre-answer both of beautify's gating questions
 
-**Gate:** Run in `--check` mode before committing. Abort if blocks are not idempotent.
+beautify refuses to proceed silently — it asks these, and will block waiting:
 
-**Output:** Three blocks injected + verified idempotent.
+| beautify asks | You must supply **in the same prompt** |
+|---|---|
+| "improve the whole README or only create visual assets?" | **README mode — full redesign.** Structure and copy are in scope. |
+| "pure SVG, or hybrid SVG composition?" (hero-like assets) | **Pure SVG.** Deterministic, no ImageGen, no raster layers. |
 
-**IF no custom generator exists:** Skip to Step 7. README is complete without deterministic blocks.
+Hybrid/ImageGen is only used if the user explicitly asks for generated raster art. Do not offer it as a default.
 
-### Step 7: Validate Against House Rules (readme skill)
+### 3c. Pass everything else beautify needs
 
-**Run final lint pass:**
+- **Art-direction spec** from Step 2 (verbatim, in its format).
+- **Repo profile** from Step 1 (real components, real proof).
+- **House rules** from the `readme` skill, stated as hard constraints:
+  - no dynamic facts in prose — versions, image tags, sha pins, durations, counts (renegotiates itself; Renovate moves them)
+  - cluster-agnostic — no cluster type, region, hostname, or cloud provider in prose
+  - no emoji in headings
+  - point at the single source of truth, never restate it
+- **Existing README** as the reference for tone and emphasis.
 
-- [ ] No dynamic facts (versions, counts, timings, shas) outside of deterministic blocks
-- [ ] Every command is copy-pasteable + tested
-- [ ] No emoji in section headings
-- [ ] Theme palette applied (banner, badges, palette matching)
-- [ ] Badge row rendered + theme-matched
-- [ ] ToC present + clickable (no hand-edits to markers)
-- [ ] Blocks idempotent (if present)
-- [ ] No inline CSS, web fonts, animations
-- [ ] Repo-agnostic (no cluster type, region, hostname in prose)
-- [ ] Structure matches repo type (infra repos have services/apps sections, etc.)
+### 3d. What beautify will produce
 
-**Output:** House-rule validation passed (or report violations).
+- A restructured README following its README-mode order: hero → proof → what it is → why it differs → how it works → how to use → limits/license.
+- Hero + section-header visuals as **pure SVG**, written under `assets/readme/`.
+- A `1200`-unit-wide `viewBox`, embedded at `width="100%"`. Essential text ≥ `20` SVG units.
+- Real proof before abstract claims; no decorative stock imagery.
 
-## Adding Deterministic Blocks to Your Repo (Optional)
+### 3e. Gate immediately after beautify
 
-If you want workflow badges, CI table, and directory tree blocks, add a custom generator:
+```bash
+python3 ~/.agents/skills/beautify-github-readme/scripts/audit_readme.py ./README.md
+```
 
-### 1. Create `.useful-scripts/render_readme_blocks.py`
+Run this **before** Steps 4–6, while the README is still beautify's own output.
 
-Your custom Python script should:
-- Parse `.github/workflows/` and extract workflow names + status badge URLs
-- Render a CI environment table (cluster-agnostic)
-- Render an allowlisted directory tree
-- Support `--check` mode to verify idempotency (exit non-zero if blocks are stale)
-- Use sentinel markers like `<!-- BEGIN GENERATED: badges -->` for each block
+### 3f. Constraints on beautify's own behaviour
 
-**Reference implementation:** gke_GitOps `.useful-scripts/render_readme_blocks.py`.
+- **Do not accept beautify's "README MADE WITH" signature or showcase offer** unless the user explicitly opts in. It is opt-in and must never be added unasked.
+- **Do not commit, push, or open a PR.** Show the preview and the diff, then stop (see Step 8).
 
-### 2. When running readme-studio, the skill will:
-- Detect `.useful-scripts/render_readme_blocks.py`
-- Invoke it as Step 6
-- Verify idempotency via `--check` mode
-- Report any drift
+---
 
-## How This Differs from readme-ai
+## Step 4: Themed badges (shieldcn-badges)
 
-| Feature | readme-ai | readme-studio |
+Delegate to `shieldcn-badges` to render the badge row, inheriting the Step 2 palette.
+
+- Stack identity (Go, Terraform, Helm, Kubernetes, …) — only what the repo actually uses.
+- Live CI status per real workflow file.
+- Docs / issues / releases links when they exist.
+
+Wrap the row in sentinels so re-runs are idempotent:
+
+```markdown
+<!-- SHIELDS_BADGES -->
+...badge row...
+<!-- /SHIELDS_BADGES -->
+```
+
+If shieldcn is unavailable, fall back to static `shields.io` URIs with the palette colours. Do not leave the section empty.
+
+---
+
+## Step 5: Deterministic blocks (optional, repo-owned)
+
+Run only if `.useful-scripts/render_readme_blocks.py` exists in the repo.
+
+```bash
+python3 .useful-scripts/render_readme_blocks.py --check   # verify idempotency first
+python3 .useful-scripts/render_readme_blocks.py           # then render
+```
+
+Blocks: workflow status table, CI environment table (cluster-agnostic), allowlisted directory tree. Sentinels: `<!-- BEGIN GENERATED: <name> -->` / `<!-- END GENERATED: <name> -->`.
+
+The generator lives in the **repo**, never in this skill. If it is absent, skip this step — the README is complete without it.
+
+---
+
+## Step 6: Clickable ToC (md_toc)
+
+```bash
+md_toc github README.md        # preview to stdout — always start here
+md_toc -p github README.md     # -p = in-place
+md_toc -d github README.md     # -d = diff check; exits 128 when stale (CI gate)
+```
+
+- `github` is the **parser subcommand**, not a flag. It selects GitHub's slug algorithm; the default parser produces different anchors.
+- `-p` = in-place, `-d` = read-only check. The marker defaults to `<!--TOC-->`.
+- Runs **last** among the additive steps so every heading exists before anchors are computed.
+
+Optional CI gate:
+
+```yaml
+- repo: https://github.com/frnmst/md-toc
+  rev: 9.0.0
+  hooks:
+    - id: md-toc
+      args: [-p, github]
+```
+
+---
+
+## Step 7: House-rule lint
+
+Final pass over the assembled README:
+
+- [ ] No dynamic facts (versions, counts, timings, shas) outside deterministic blocks
+- [ ] Every command is copy-pasteable and real
+- [ ] No emoji in headings
+- [ ] No cluster type, region, hostname, or provider in prose
+- [ ] Hero renders at GitHub content width; essential text legible, nothing clipped
+- [ ] Badge row present and palette-matched
+- [ ] ToC present, clickable, and `md_toc -d github README.md` exits 0
+- [ ] Sentinel markers present but never visible in prose
+- [ ] Structure matches the repo type from Step 1
+- [ ] Prose points at the single source of truth instead of restating it
+
+Report violations rather than silently fixing them.
+
+---
+
+## Step 8: Hand off — do not commit
+
+Show the local preview and the diff. State what changed, what was deliberately left plain, and which files were untouched.
+
+**Do not commit, push, open a PR, or merge without explicit user approval.**
+
+---
+
+## Failure modes to avoid
+
+| Symptom | Cause | Fix |
 |---|---|---|
-| **Generation method** | Binary + templates | LLM (beautify-github-readme) + orchestration |
-| **Structure** | Fixed template | Adapts to repo content (infra vs Terraform vs custom) |
-| **Theming** | Colours embedded in binary | Theme palette cascaded via published skills |
-| **Extensibility** | Limited (binary constraints) | Fully extensible (compose published skills) |
-| **Customization** | Override templates | No templating; LLM infers structure |
-| **House rules** | None | Enforced via readme skill (no dynamic facts, cluster-agnostic, etc.) |
-| **Deterministic blocks** | Project Index (noisy) | Custom generator per repo (workflow badges, CI table, tree) |
-
-## Troubleshooting
-
-### "README structure doesn't match my repo"
-- beautify-github-readme infers structure from repo content.
-- If the inferred structure is wrong, beautify-github-readme accepts a "structure hint" parameter.
-- Provide feedback to beautify-github-readme about preferred section order or emphasis.
-
-### "Badge colours don't match the theme"
-- Verify Step 2 palette was chosen correctly.
-- Confirm shieldcn-badges was invoked with correct `--color` flags (primary + secondary).
-- Check shieldcn.dev availability; if down, fallback shields.io URIs are used.
-
-### "ToC doesn't match GitHub's slug format"
-- Confirm `github` is passed as the parser subcommand — the default parser produces different anchors.
-- Compare with `md_toc -d github README.md`; a 128 exit means the committed ToC is stale.
-- Check for non-ASCII headings, which can break slug fidelity.
-
-### "Deterministic blocks are out of date"
-- Run `.useful-scripts/render_readme_blocks.py --check` locally to see the diff.
-- Fix the drift in the source (`.github/workflows/`, `services/argocd-appset/values.yaml`, etc.), not in README markers.
+| Pipeline stalls asking "whole README or asset-only?" | Step 3b not supplied | Pre-answer **README mode** in the invocation |
+| Pipeline stalls asking "pure SVG or hybrid?" | Step 3b not supplied | Pre-answer **pure SVG** |
+| beautify never runs; a plain banner appears | Skill named in prose, `$beautify-github-readme` form never used | Use the documented invocation |
+| Badges/ToC missing after a beautify pass | Additive steps ran before or inside beautify's rewrite | Run Steps 4–6 **after** Step 3 |
+| Badge colours clash with the hero | Palette locked in Step 2 never passed to Steps 3/4 | Pass the art-direction spec verbatim |
+| No visual theme preview | `opencode-image` attempted | Not available here (SSH, no Kitty) — use the ASCII swatch table |
+| Agent offers an A/B/C workaround menu | Prereq treated as a decision | Install in Step 0; only report genuine blockers |
 
 ## References
 
-**Orchestrated skills:**
-- [beautify-github-readme](https://github.com/oil-oil/beautify-github-readme) — intelligent README generation, structure + prose based on repo content
-- [shieldcn-badges](https://github.com/jal-co/shieldcn) — themed badge rendering, hosted service, idempotency
-
-**Community tools:**
-- [md-toc](https://github.com/frnmst/md-toc) — GitHub-slug-fidelity ToC, pre-commit hook, CI check mode
-
-**House rules:**
-- `readme` skill — no dynamic facts, gradient assets, no emoji headings, cluster-agnostic, repo-tour patterns
-- `repo-taxonomy` skill — workload classification (services vs apps), wording constraints
+- [beautify-github-readme](https://github.com/oil-oil/beautify-github-readme) — README mode, structure + copy + SVG visuals, `scripts/audit_readme.py`
+- [shieldcn-badges](https://github.com/jal-co/shieldcn) — themed badges via shieldcn.dev
+- [md-toc](https://github.com/frnmst/md-toc) — GitHub-slug ToC, pre-commit hook, `-d` CI gate
+- `readme` skill — house rules: no dynamic facts, no emoji headings, cluster-agnostic
+- `repo-taxonomy` skill — services vs apps classification
 
 ## Checklist
 
-- [ ] Repo introspected (Step 1)
-- [ ] Theme palette selected (Step 2)
-- [ ] README generated/restructured by beautify-github-readme (Step 3)
-- [ ] Themed badges rendered (Step 4)
-- [ ] ToC generated + clickable (Step 5)
-- [ ] Custom blocks rendered + idempotent, if generator exists (Step 6)
+- [ ] Prereqs verified and installed (Step 0)
+- [ ] Repo introspected, real proof identified (Step 1)
+- [ ] Art direction locked and presented as swatches (Step 2)
+- [ ] beautify invoked via `$beautify-github-readme`, README mode + pure SVG pre-answered (Step 3)
+- [ ] `audit_readme.py` run on beautify's output (Step 3e)
+- [ ] Themed badges injected with sentinels (Step 4)
+- [ ] Deterministic blocks rendered + idempotent, or step skipped (Step 5)
+- [ ] ToC generated; `md_toc -d github README.md` exits 0 (Step 6)
 - [ ] House-rule lint passed (Step 7)
-- [ ] No sentinel markers left in prose
-- [ ] Git diff shows only expected README changes
-- [ ] PR open for review + merge
+- [ ] Preview + diff shown; **not** committed (Step 8)
