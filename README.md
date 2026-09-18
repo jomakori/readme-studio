@@ -20,7 +20,7 @@ The skill orchestrates two published skills and one CLI. Install them once per m
 ```bash
 npx skills add oil-oil/beautify-github-readme -g -a opencode
 npx skills add jal-co/shieldcn -g -a opencode
-pip install md-toc
+pip install md-toc          # installs the `md_toc` command
 ```
 
 ## Use
@@ -59,9 +59,9 @@ replaces the row instead of appending to it.
 
 ### Table of contents
 
-Delegated to [md-toc](https://github.com/frnmst/md-toc), whose anchors match GitHub's slug
-algorithm exactly. The same check runs as a pre-commit hook or a CI step, so a heading rename
-fails loudly instead of silently breaking a link.
+Delegated to [md-toc](https://github.com/frnmst/md-toc), invoked with its `github` parser so the
+anchors match GitHub's slug algorithm. The same check runs as a pre-commit hook or a CI step, so a
+heading rename fails loudly instead of silently breaking a link.
 
 ### Deterministic blocks (optional)
 
@@ -90,7 +90,7 @@ next dependency bump; prose that points at the source does not.
 
 ## Requirements
 
-- OpenCode, with the two skills and the `md-toc` CLI installed as above.
+- OpenCode, with the two skills and the `md_toc` CLI installed as above.
 - A graphics-free environment is fine: the palette is chosen from a table, and the theme is
   visible once the banner and badges render in the README.
 

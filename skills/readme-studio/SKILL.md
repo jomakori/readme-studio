@@ -32,8 +32,11 @@ No hand-writing content. No templating. The LLM-powered beautify skill reads you
 npx skills add oil-oil/beautify-github-readme -g -a opencode
 npx skills add jal-co/shieldcn -g -a opencode
 
-# Community ToC generator (CLI)
-pip install md-toc
+# Community ToC generator (CLI). The command it installs is `md_toc` (underscore).
+# Homebrew/system Pythons often refuse a global pip install (PEP 668); a venv avoids that:
+python3 -m venv ~/.local/share/md-toc-venv \
+  && ~/.local/share/md-toc-venv/bin/pip install md-toc \
+  && ln -sfn ~/.local/share/md-toc-venv/bin/md_toc ~/.local/bin/md_toc
 
 # This orchestration skill
 npx skills add jomakori/readme-studio -g -a opencode
@@ -43,7 +46,7 @@ npx skills add jomakori/readme-studio -g -a opencode
 
 ```bash
 echo "- repo: https://github.com/frnmst/md-toc" >> .pre-commit-config.yaml
-echo "  rev: 8.2.0" >> .pre-commit-config.yaml
+echo "  rev: 9.0.0" >> .pre-commit-config.yaml
 echo "  hooks:" >> .pre-commit-config.yaml
 echo "  - id: md-toc" >> .pre-commit-config.yaml
 ```
@@ -113,17 +116,22 @@ Choose a gradient palette. Your choice cascades through all downstream rendering
 
 **Output:** Coloured badge rows injected + idempotent markers in place.
 
-### Step 5: Generate Clickable Table of Contents (md-toc)
+### Step 5: Generate Clickable Table of Contents (md_toc)
 
-**Run `md-toc` (CLI):**
+**Run the `md_toc` CLI.** Read the argument order carefully — the parser is a subcommand, and `-p` is not the parser flag:
 
-- Auto-generates ToC from H2/H3 headings in the README
-- GitHub-slug-fidelity (exact anchor matching GitHub's algorithm)
-- No emoji, no version markers in ToC
+```bash
+md_toc github README.md            # print the ToC to stdout (dry run — start here)
+md_toc -p github README.md         # -p = in-place; "github" = the parser subcommand
+md_toc -d github README.md         # -d = diff check; exits 128 when the ToC is stale
+```
 
-**Markers:** Use `<!-- TOC_START -->` and `<!-- TOC_END -->` sentinels.
+- `github` must be the **parser subcommand** — it selects GitHub's slug algorithm. The default parser produces different anchors.
+- `-p` means **in-place**: it rewrites the file at the marker. `-d` (`--diff`) is the read-only check for CI.
+- The marker defaults to `<!--TOC-->`. Override it with `-m '<marker>'` if the repo already uses a different one, and keep the marker in the README, not in prose.
+- No emoji, no version markers in the ToC.
 
-**Output:** ToC block inserted + sentinels in place.
+**Output:** ToC inserted at its marker; `md_toc -d github README.md` exits 0.
 
 ### Step 6: Render Custom Deterministic Blocks (Optional)
 
@@ -208,9 +216,9 @@ Your custom Python script should:
 - Check shieldcn.dev availability; if down, fallback shields.io URIs are used.
 
 ### "ToC doesn't match GitHub's slug format"
-- Verify `md-toc` ≥ 8.2.0 (GitHub slug fidelity).
-- Run `md-toc --diff` locally to compare.
-- Check for non-ASCII headings that break slug fidelity.
+- Confirm `github` is passed as the parser subcommand — the default parser produces different anchors.
+- Compare with `md_toc -d github README.md`; a 128 exit means the committed ToC is stale.
+- Check for non-ASCII headings, which can break slug fidelity.
 
 ### "Deterministic blocks are out of date"
 - Run `.useful-scripts/render_readme_blocks.py --check` locally to see the diff.
