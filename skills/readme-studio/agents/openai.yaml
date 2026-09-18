@@ -1,0 +1,4 @@
+interface:
+  display_name: "README Studio"
+  short_description: "Theme, badge and structure a README by orchestrating published skills"
+  default_prompt: "Use $readme-studio to regenerate my README: introspect the repo, confirm a gradient palette, then chain beautify-github-readme for structure, shieldcn-badges for themed badges, and md-toc for the table of contents."
